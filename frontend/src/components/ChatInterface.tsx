@@ -243,12 +243,35 @@ export default function ChatInterface() {
             });
           }
           
-          // Show success toast when message is complete
+          // Show success toast when message is complete, or handle empty response
           if (assistantContent.trim()) {
             addToast("Message sent successfully!", "success");
+          } else {
+            // Empty response likely indicates an API key or authentication error
+            const { message, type } = parseErrorMessage("No response received from AI. This usually indicates an invalid API key or authentication issue.", 401);
+            addToast(message, type);
+            setError(message);
+            
+            // Remove the empty assistant message
+            setMessages(prev => prev.slice(0, -1));
+            return;
           }
         } catch (streamError) {
-          const { message, type } = parseErrorMessage(streamError);
+          console.error("Stream reading error:", streamError);
+          // Check if this looks like an authentication/API key error
+          const errorMessage = streamError instanceof Error ? streamError.message : String(streamError);
+          let finalError;
+          
+          if (errorMessage.toLowerCase().includes("connection") || 
+              errorMessage.toLowerCase().includes("network") ||
+              errorMessage.toLowerCase().includes("chunk")) {
+            // This pattern often indicates invalid API key causing connection issues
+            finalError = "Connection failed while reading AI response. This usually indicates an invalid API key or authentication issue. Please check your OpenAI API key.";
+          } else {
+            finalError = streamError;
+          }
+          
+          const { message, type } = parseErrorMessage(finalError, 401);
           addToast(message, type);
           setError(message);
           
