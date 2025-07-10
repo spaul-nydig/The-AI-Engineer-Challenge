@@ -75,7 +75,6 @@ export default function ChatInterface() {
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("gpt-4.1-mini");
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState("");
   const [toasts, setToasts] = useState<Toast[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -169,7 +168,6 @@ export default function ChatInterface() {
     }
 
     // Clear any existing errors
-    setError("");
     setIsLoading(true);
 
     // Add user message to chat
@@ -204,7 +202,6 @@ export default function ChatInterface() {
         
         const { message, type } = parseErrorMessage(errorData.detail || errorData, response.status);
         addToast(message, type);
-        setError(message);
         
         // Remove the user message if there was an error
         setMessages(prev => prev.slice(0, -1));
@@ -250,7 +247,6 @@ export default function ChatInterface() {
             // Empty response likely indicates an API key or authentication error
             const { message, type } = parseErrorMessage("No response received from AI. This usually indicates an invalid API key or authentication issue.", 401);
             addToast(message, type);
-            setError(message);
             
             // Remove the empty assistant message
             setMessages(prev => prev.slice(0, -1));
@@ -273,7 +269,6 @@ export default function ChatInterface() {
           
           const { message, type } = parseErrorMessage(finalError, 401);
           addToast(message, type);
-          setError(message);
           
           // Remove partial assistant message
           setMessages(prev => prev.slice(0, -1));
@@ -286,7 +281,6 @@ export default function ChatInterface() {
       console.error("Error:", error);
       const { message, type } = parseErrorMessage(error);
       addToast(message, type);
-      setError(message);
       
       // Remove the user message if there was an error
       setMessages(prev => prev.slice(0, -1));
@@ -297,7 +291,6 @@ export default function ChatInterface() {
 
   const clearChat = () => {
     setMessages([]);
-    setError("");
     addToast("Chat cleared", "info");
   };
 
@@ -423,13 +416,6 @@ export default function ChatInterface() {
           <div ref={messagesEndRef} />
         </div>
       </div>
-
-      {/* Error Message */}
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 mx-4 rounded-md mb-4">
-          {error}
-        </div>
-      )}
 
       {/* Input Form */}
       <div className="bg-white border-t border-gray-200 p-4">
