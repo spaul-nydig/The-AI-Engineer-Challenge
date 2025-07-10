@@ -7,6 +7,67 @@ interface ChatMessage {
   content: string;
 }
 
+interface Toast {
+  id: string;
+  message: string;
+  type: "error" | "success" | "warning" | "info";
+}
+
+// Toast component for notifications
+function ToastNotification({ toast, onClose }: { toast: Toast; onClose: (id: string) => void }) {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      onClose(toast.id);
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [toast.id, onClose]);
+
+  const getToastStyles = () => {
+    switch (toast.type) {
+      case "error":
+        return "bg-red-500 text-white border-red-600";
+      case "success":
+        return "bg-green-500 text-white border-green-600";
+      case "warning":
+        return "bg-yellow-500 text-white border-yellow-600";
+      case "info":
+        return "bg-blue-500 text-white border-blue-600";
+      default:
+        return "bg-gray-500 text-white border-gray-600";
+    }
+  };
+
+  const getIcon = () => {
+    switch (toast.type) {
+      case "error":
+        return "❌";
+      case "success":
+        return "✅";
+      case "warning":
+        return "⚠️";
+      case "info":
+        return "ℹ️";
+      default:
+        return "📝";
+    }
+  };
+
+  return (
+    <div className={`fixed top-4 right-4 z-50 p-4 rounded-lg border shadow-lg max-w-sm animate-in slide-in-from-right ${getToastStyles()}`}>
+      <div className="flex items-center space-x-2">
+        <span className="text-lg">{getIcon()}</span>
+        <p className="flex-1 text-sm font-medium">{toast.message}</p>
+        <button
+          onClick={() => onClose(toast.id)}
+          className="ml-2 text-white hover:text-gray-200 focus:outline-none"
+        >
+          ✕
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function ChatInterface() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [userMessage, setUserMessage] = useState("");
@@ -15,6 +76,7 @@ export default function ChatInterface() {
   const [model, setModel] = useState("gpt-4.1-mini");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [toasts, setToasts] = useState<Toast[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -25,14 +87,88 @@ export default function ChatInterface() {
     scrollToBottom();
   }, [messages]);
 
+  // Toast management functions
+  const addToast = (message: string, type: Toast["type"] = "info") => {
+    const id = Date.now().toString();
+    setToasts(prev => [...prev, { id, message, type }]);
+  };
+
+  const removeToast = (id: string) => {
+    setToasts(prev => prev.filter(toast => toast.id !== id));
+  };
+
+  // Error message parsing function
+  const parseErrorMessage = (error: unknown, status?: number): { message: string; type: Toast["type"] } => {
+    const errorString = error instanceof Error ? error.message : 
+                       typeof error === 'string' ? error : 
+                       (error as { detail?: string })?.detail || 
+                       "Unknown error occurred";
+    
+    // Check for common OpenAI API errors
+    if (status === 401 || errorString.toLowerCase().includes("unauthorized") || errorString.toLowerCase().includes("invalid api key")) {
+      return {
+        message: "Invalid API key. Please check your OpenAI API key and try again.",
+        type: "error"
+      };
+    }
+    
+    if (status === 429 || errorString.toLowerCase().includes("rate limit") || errorString.toLowerCase().includes("quota")) {
+      return {
+        message: "Rate limit exceeded or insufficient quota. Please check your OpenAI account.",
+        type: "warning"
+      };
+    }
+    
+    if (status === 400 || errorString.toLowerCase().includes("bad request")) {
+      return {
+        message: "Invalid request. Please check your input and selected model.",
+        type: "error"
+      };
+    }
+    
+    if (status === 404 || errorString.toLowerCase().includes("not found")) {
+      return {
+        message: "Model not found. Please select a different model.",
+        type: "error"
+      };
+    }
+    
+    if (status === 500 || errorString.toLowerCase().includes("internal server error")) {
+      return {
+        message: "OpenAI service is temporarily unavailable. Please try again later.",
+        type: "error"
+      };
+    }
+    
+    if (errorString.toLowerCase().includes("network") || errorString.toLowerCase().includes("fetch")) {
+      return {
+        message: "Network error. Please check your internet connection and try again.",
+        type: "error"
+      };
+    }
+    
+    // Default error message
+    return {
+      message: `Error: ${errorString}`,
+      type: "error"
+    };
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!userMessage.trim() || !apiKey.trim()) {
-      setError("Please enter both a message and API key");
+    // Enhanced validation with specific error messages
+    if (!apiKey.trim()) {
+      addToast("Please enter your OpenAI API key", "warning");
+      return;
+    }
+    
+    if (!userMessage.trim()) {
+      addToast("Please enter a message", "warning");
       return;
     }
 
+    // Clear any existing errors
     setError("");
     setIsLoading(true);
 
@@ -57,8 +193,22 @@ export default function ChatInterface() {
         }),
       });
 
+      // Enhanced error handling with specific status codes
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch {
+          errorData = { detail: `HTTP ${response.status}: ${response.statusText}` };
+        }
+        
+        const { message, type } = parseErrorMessage(errorData.detail || errorData, response.status);
+        addToast(message, type);
+        setError(message);
+        
+        // Remove the user message if there was an error
+        setMessages(prev => prev.slice(0, -1));
+        return;
       }
 
       // Handle streaming response
@@ -74,29 +224,47 @@ export default function ChatInterface() {
       setMessages(prev => [...prev, assistantMessage]);
 
       if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-          const chunk = decoder.decode(value, { stream: true });
-          assistantContent += chunk;
+            const chunk = decoder.decode(value, { stream: true });
+            assistantContent += chunk;
+            
+            // Update the last message (assistant's response)
+            setMessages(prev => {
+              const updated = [...prev];
+              updated[updated.length - 1] = {
+                ...updated[updated.length - 1],
+                content: assistantContent,
+              };
+              return updated;
+            });
+          }
           
-          // Update the last message (assistant's response)
-          setMessages(prev => {
-            const updated = [...prev];
-            updated[updated.length - 1] = {
-              ...updated[updated.length - 1],
-              content: assistantContent,
-            };
-            return updated;
-          });
+          // Show success toast when message is complete
+          if (assistantContent.trim()) {
+            addToast("Message sent successfully!", "success");
+          }
+        } catch (streamError) {
+          const { message, type } = parseErrorMessage(streamError);
+          addToast(message, type);
+          setError(message);
+          
+          // Remove partial assistant message
+          setMessages(prev => prev.slice(0, -1));
+          return;
         }
       }
 
       setUserMessage("");
     } catch (error) {
       console.error("Error:", error);
-      setError("Failed to send message. Please check your API key and try again.");
+      const { message, type } = parseErrorMessage(error);
+      addToast(message, type);
+      setError(message);
+      
       // Remove the user message if there was an error
       setMessages(prev => prev.slice(0, -1));
     } finally {
@@ -107,10 +275,16 @@ export default function ChatInterface() {
   const clearChat = () => {
     setMessages([]);
     setError("");
+    addToast("Chat cleared", "info");
   };
 
   return (
     <div className="flex flex-col h-screen bg-gray-50">
+      {/* Toast Notifications */}
+      {toasts.map(toast => (
+        <ToastNotification key={toast.id} toast={toast} onClose={removeToast} />
+      ))}
+
       {/* Header */}
       <div className="bg-white shadow-sm border-b border-gray-200 p-4">
         <div className="max-w-4xl mx-auto">
@@ -126,15 +300,28 @@ export default function ChatInterface() {
             <div>
               <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700 mb-1">
                 OpenAI API Key
+                {apiKey.trim() && (
+                  <span className="ml-2 text-xs text-green-600">✓ Entered</span>
+                )}
               </label>
-              <input
-                id="apiKey"
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="Enter your OpenAI API key"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
+              <div className="relative">
+                <input
+                  id="apiKey"
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="Enter your OpenAI API key"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                {!apiKey.trim() && (
+                  <div className="absolute inset-y-0 right-0 flex items-center pr-3">
+                    <span className="text-red-400 text-sm">⚠️</span>
+                  </div>
+                )}
+              </div>
+              {!apiKey.trim() && (
+                <p className="text-xs text-red-600 mt-1">API key is required</p>
+              )}
             </div>
             <div>
               <label htmlFor="model" className="block text-sm font-medium text-gray-700 mb-1">
